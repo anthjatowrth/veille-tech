@@ -1,0 +1,47 @@
+# Veille tech — configuration
+# Modifier librement les feeds ; le reste ne bouge pas sauf changement Notion.
+
+lookback_days: 8        # fenêtre de fraîcheur des articles
+max_candidates: 60      # plafond d'items envoyés au LLM par run
+gemini_model: gemini-2.5-flash
+
+notion:
+  db_maj_outils: 5b8a1f1a-3343-4d03-a72e-1b49228014e1
+  db_nouveaux_outils: 472c0065-171e-405b-a67b-48e1ddc0c5d5
+  db_bonnes_pratiques: 1f4a1533-df23-4b36-a953-8dfcd8fcfd75
+  db_digest: d55659f2-0951-4484-bf5e-d561517e4146
+
+feeds:
+  # --- Releases outils (GitHub Atom, fiables) ---
+  - name: dbt-core
+    url: https://github.com/dbt-labs/dbt-core/releases.atom
+  - name: Apache Airflow
+    url: https://github.com/apache/airflow/releases.atom
+  - name: Metabase
+    url: https://github.com/metabase/metabase/releases.atom
+  - name: FastAPI
+    url: https://github.com/fastapi/fastapi/releases.atom
+  - name: n8n
+    url: https://github.com/n8n-io/n8n/releases.atom
+  - name: DuckDB
+    url: https://github.com/duckdb/duckdb/releases.atom
+  # --- Blogs data / IA ---
+  - name: Simon Willison
+    url: https://simonwillison.net/atom/everything/
+  - name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+  - name: Python Insider
+    url: https://blog.python.org/feeds/posts/default?alt=rss
+  - name: PostgreSQL News
+    url: https://www.postgresql.org/news.rss
+  - name: Power BI Blog
+    url: https://powerbi.microsoft.com/en-us/blog/feed/
+  - name: KDnuggets
+    url: https://www.kdnuggets.com/feed
+  - name: Latent Space
+    url: https://www.latent.space/feed
+  # --- Agrégateurs ---
+  - name: Hacker News (best)
+    url: https://hnrss.org/best
+  - name: r/dataengineering
+    url: https://www.reddit.com/r/dataengineering/top/.rss?t=week
