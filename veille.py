@@ -25,6 +25,19 @@ NOTION_HEADERS = {
 }
 NOW = datetime.now(timezone.utc)
 
+# Palette du mail. Remplacer par les valeurs de charte_visuelle.md.
+THEME = {
+    "accent": "#2C4A6E",        # couleur principale, titres et liens
+    "accent_soft": "#5B7FA6",   # variante claire
+    "highlight": "#C9762A",     # couleur secondaire, accents ponctuels
+    "text": "#1A1A1A",
+    "muted": "#6B6B6B",
+    "rule": "#E6E4E0",
+    "surface": "#FFFFFF",
+    "canvas": "#F5F4F1",
+    "font": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
+}
+
 # Valeurs autorisées par les selects Notion (doivent matcher exactement)
 ENUMS = {
     "outil": ["Python", "PostgreSQL", "MySQL", "MongoDB", "Power BI", "Tableau", "Looker Studio",
@@ -125,6 +138,9 @@ Pour chaque item retenu, écris aussi :
 Écris enfin resume_global_fr : 3-5 phrases en français résumant la semaine
 (les tendances, ce qui mérite du temps en priorité).
 
+Contraintes de rédaction : français naturel et direct, jamais de tiret cadratin (—),
+jamais de tournure "non pas X, mais Y", pas de superlatif marketing. Va au fait.
+
 Réponds UNIQUEMENT en JSON :
 {{"items": [{{"index": 0, "keep": true, "target": "maj", "titre_fr": "...", "resume_fr": "...",
   "outil": "...", "type_maj": "...", "pertinence": "...", "categorie": "...",
@@ -204,7 +220,7 @@ def push_item(item, url):
 def push_digest(counts, resume_global):
     week = NOW.isocalendar()
     notion_create(CONFIG["notion"]["db_digest"], {
-        "Semaine": {"title": [{"text": {"content": f"Semaine {week.week} — {NOW.year}"}}]},
+        "Semaine": {"title": [{"text": {"content": f"Semaine {week.week} / {NOW.year}"}}]},
         "Période": {"date": {"start": (NOW - timedelta(days=7)).date().isoformat(),
                              "end": NOW.date().isoformat()}},
         "Nb mises à jour": {"number": counts["maj"]},
@@ -217,28 +233,55 @@ def push_digest(counts, resume_global):
 
 # ---------- 5. Mail récap ----------
 
-SECTION_LABELS = {"maj": "🔄 Mises à jour outils", "nouveau": "🆕 Nouveaux outils & frameworks",
-                  "pratique": "💡 Bonnes pratiques"}
+SECTIONS = [
+    ("maj", "Mises à jour outils", THEME["accent"]),
+    ("nouveau", "Nouveaux outils & frameworks", THEME["highlight"]),
+    ("pratique", "Bonnes pratiques", THEME["accent_soft"]),
+]
 
 
 def send_mail(kept, resume_global):
-    parts = [f"<p>{html.escape(resume_global)}</p>"]
-    for target, label in SECTION_LABELS.items():
+    esc = html.escape
+    t = THEME
+    parts = []
+    for target, label, color in SECTIONS:
         rows = [k for k in kept if k["item"]["target"] == target]
         if not rows:
             continue
-        parts.append(f"<h3>{label}</h3><ul>")
+        parts.append(
+            f'<div style="margin:30px 0 4px"><span style="display:inline-block;'
+            f'border-left:3px solid {color};padding-left:10px;font-size:12px;'
+            f'font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            f'color:{color}">{label} &middot; {len(rows)}</span></div>')
         for k in rows:
             it = k["item"]
             parts.append(
-                f'<li><a href="{html.escape(k["url"])}">{html.escape(it["titre_fr"])}</a>'
-                f'<br><small>{html.escape(it.get("resume_fr", ""))}</small></li>')
-        parts.append("</ul>")
-    body = ("<html><body style='font-family:sans-serif;max-width:680px'>"
-            f"<h2>Veille tech — semaine {NOW.isocalendar().week}</h2>" + "".join(parts) +
-            "<p><small>Détails et historique dans Notion → Veille Tech.</small></p></body></html>")
+                f'<div style="padding:15px 0;border-bottom:1px solid {t["rule"]}">'
+                f'<a href="{esc(k["url"])}" style="color:{t["text"]};font-size:16px;'
+                f'font-weight:600;text-decoration:none;line-height:1.35">'
+                f'{esc(it["titre_fr"])}</a>'
+                f'<div style="margin-top:7px;font-size:14px;line-height:1.6;'
+                f'color:{t["muted"]}">{esc(it.get("resume_fr", ""))}</div></div>')
+
+    week = NOW.isocalendar().week
+    body = (
+        f'<html><body style="margin:0;padding:24px 12px;background:{t["canvas"]}">'
+        f'<div style="max-width:640px;margin:0 auto;background:{t["surface"]};'
+        f'padding:34px 36px;border-radius:6px;border-top:3px solid {t["accent"]};'
+        f'font-family:{t["font"]};color:{t["text"]}">'
+        f'<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;'
+        f'color:{t["muted"]}">Semaine {week} &middot; {NOW.strftime("%d/%m/%Y")}</div>'
+        f'<h1 style="margin:8px 0 20px;font-size:25px;font-weight:700;'
+        f'letter-spacing:-.01em">Veille tech</h1>'
+        f'<div style="background:{t["canvas"]};border-radius:5px;padding:17px 19px;'
+        f'font-size:14px;line-height:1.65">{esc(resume_global)}</div>'
+        + "".join(parts) +
+        f'<div style="margin-top:30px;padding-top:16px;border-top:1px solid {t["rule"]};'
+        f'font-size:12px;color:{t["muted"]}">{len(kept)} items archives dans Notion, '
+        f'base Veille Tech.</div></div></body></html>')
+
     msg = MIMEText(body, "html", "utf-8")
-    msg["Subject"] = f"Veille tech — semaine {NOW.isocalendar().week} ({len(kept)} items)"
+    msg["Subject"] = f"Veille tech &middot; semaine {week} &middot; {len(kept)} items".replace("&middot;", "|")
     msg["From"] = os.environ["GMAIL_USER"]
     msg["To"] = os.environ["MAIL_TO"]
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
