@@ -132,17 +132,30 @@ Chaque item retenu est classé dans UNE cible :
 
 Pour chaque item retenu, écris aussi :
 - titre_fr : titre reformulé en français, clair et concret
-- resume_fr : 2 à 4 phrases en français. Pas de jargon marketing, dis ce que c'est,
-  ce que ça change, et pourquoi c'est utile (ou pas) pour ce profil.
+- resume_fr : 3 à 5 phrases en français. Explique le fond technique : ce que fait la
+  techno, comment elle marche, ce qui change par rapport à l'existant, les chiffres ou
+  limites annoncés s'il y en a. Interdiction de paraphraser le titre ou de rester vague
+  ("améliore les performances", "simplifie le workflow" sans dire comment).
+- impact_fr : 3 à 5 phrases. C'est la partie la plus importante, soigne-la. Réponds
+  concrètement à : qu'est-ce que ça permet de faire que je ne pouvais pas faire avant,
+  sur quel projet ou quelle partie de ma stack (SQL, Python, Power BI, Metabase, dbt,
+  Airflow, FastAPI, n8n, Azure, GCP) ça s'applique, quel est le gain réel (temps, coût,
+  fiabilité, nouvelle offre client) et quel est le piège ou le coût de migration. Si
+  l'impact pour ce profil est faible, dis-le franchement et explique pourquoi.
+- action_fr : une seule phrase, l'action concrète à faire si le sujet est retenu
+  (ex : "tester X sur le pipeline Y", "lire la doc de migration avant la montée de version").
 
-Écris enfin resume_global_fr : 3-5 phrases en français résumant la semaine
-(les tendances, ce qui mérite du temps en priorité).
+Écris enfin resume_global_fr : 4 à 6 phrases en français. Ne liste pas les articles :
+dégage les 2-3 tendances de fond de la semaine, dis ce qui mérite du temps en priorité
+et pourquoi, et ce qui peut attendre.
 
 Contraintes de rédaction : français naturel et direct, jamais de tiret cadratin (—),
 jamais de tournure "non pas X, mais Y", pas de superlatif marketing. Va au fait.
+Pas de "il est important de noter", pas de conclusion qui répète l'intro.
 
 Réponds UNIQUEMENT en JSON :
 {{"items": [{{"index": 0, "keep": true, "target": "maj", "titre_fr": "...", "resume_fr": "...",
+  "impact_fr": "...", "action_fr": "...",
   "outil": "...", "type_maj": "...", "pertinence": "...", "categorie": "...",
   "pertinence_moi": "...", "signal": "...", "niveau": "...", "outil_concerne": "..."}}],
  "resume_global_fr": "..."}}
@@ -176,21 +189,43 @@ def gemini_analyze(candidates):
 
 # ---------- 4. Écriture Notion ----------
 
-def notion_create(db_id, properties):
-    r = requests.post(f"{NOTION}/pages", headers=NOTION_HEADERS,
-                      json={"parent": {"database_id": db_id}, "properties": properties}, timeout=30)
+def notion_create(db_id, properties, children=None):
+    """Crée la page et renvoie son URL Notion (None si échec)."""
+    payload = {"parent": {"database_id": db_id}, "properties": properties}
+    if children:
+        payload["children"] = children
+    r = requests.post(f"{NOTION}/pages", headers=NOTION_HEADERS, json=payload, timeout=30)
     if not r.ok:
         print(f"[warn] création page Notion : {r.status_code} {r.text[:300]}", file=sys.stderr)
-    return r.ok
+        return None
+    return r.json().get("url")
 
 
 def rt(text):
     return {"rich_text": [{"text": {"content": text[:1900]}}]}
 
 
+def _block(kind, text):
+    return {"object": "block", "type": kind, kind: {"rich_text": [{"text": {"content": text[:1900]}}]}}
+
+
+def item_children(item, url):
+    """Corps de la page Notion : le détail que le mail ne montre qu'en résumé."""
+    blocks = [_block("heading_3", "Résumé"), _block("paragraph", item.get("resume_fr", ""))]
+    if item.get("impact_fr"):
+        blocks += [_block("heading_3", "Ce que ça change pour moi"),
+                   _block("paragraph", item["impact_fr"])]
+    if item.get("action_fr"):
+        blocks += [_block("heading_3", "Action"), _block("to_do", item["action_fr"])]
+    blocks += [_block("heading_3", "Source"),
+               {"object": "block", "type": "bookmark", "bookmark": {"url": url}}]
+    return blocks
+
+
 def push_item(item, url):
     today = {"date": {"start": NOW.date().isoformat()}}
     title = {"title": [{"text": {"content": item.get("titre_fr", "")[:200]}}]}
+    children = item_children(item, url)
     cfg = CONFIG["notion"]
     if item["target"] == "maj":
         return notion_create(cfg["db_maj_outils"], {
@@ -199,7 +234,7 @@ def push_item(item, url):
             "Outil": {"select": {"name": valid(item.get("outil"), "outil", "Autre")}},
             "Type de mise à jour": {"select": {"name": valid(item.get("type_maj"), "type_maj", "Nouvelle fonctionnalité")}},
             "Pertinence": {"select": {"name": valid(item.get("pertinence"), "pertinence", "Intéressant")}},
-        })
+        }, children)
     if item["target"] == "nouveau":
         return notion_create(cfg["db_nouveaux_outils"], {
             "Titre": title, "Date découverte": today, "Lien officiel": {"url": url},
@@ -207,19 +242,19 @@ def push_item(item, url):
             "Catégorie": {"select": {"name": valid(item.get("categorie"), "categorie_outil", "Autre")}},
             "Pertinence pour moi": {"select": {"name": valid(item.get("pertinence_moi"), "pertinence_moi", "À surveiller")}},
             "Signal marché": {"select": {"name": valid(item.get("signal"), "signal", "Émergent")}},
-        })
+        }, children)
     return notion_create(cfg["db_bonnes_pratiques"], {
         "Titre": title, "Date": today, "Lien source": {"url": url},
         "Résumé FR": rt(item.get("resume_fr", "")),
         "Catégorie": {"select": {"name": valid(item.get("categorie"), "categorie_bp", "Autre")}},
         "Niveau": {"select": {"name": valid(item.get("niveau"), "niveau", "À explorer")}},
         "Outil concerné": rt(item.get("outil_concerne", "")),
-    })
+    }, children)
 
 
 def push_digest(counts, resume_global):
     week = NOW.isocalendar()
-    notion_create(CONFIG["notion"]["db_digest"], {
+    return notion_create(CONFIG["notion"]["db_digest"], {
         "Semaine": {"title": [{"text": {"content": f"Semaine {week.week} / {NOW.year}"}}]},
         "Période": {"date": {"start": (NOW - timedelta(days=7)).date().isoformat(),
                              "end": NOW.date().isoformat()}},
@@ -240,7 +275,12 @@ SECTIONS = [
 ]
 
 
-def send_mail(kept, resume_global):
+def source_label(url):
+    host = url.split("//")[-1].split("/")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def send_mail(kept, resume_global, digest_url=None):
     esc = html.escape
     t = THEME
     parts = []
@@ -255,13 +295,34 @@ def send_mail(kept, resume_global):
             f'color:{color}">{label} &middot; {len(rows)}</span></div>')
         for k in rows:
             it = k["item"]
+            # le titre ouvre la fiche Notion ; la source reste accessible en dessous
+            main_link = k.get("notion_url") or k["url"]
+            impact = it.get("impact_fr", "")
+            impact_html = (
+                f'<div style="margin-top:9px;padding:10px 12px;background:{t["canvas"]};'
+                f'border-left:2px solid {color};border-radius:3px;font-size:13.5px;'
+                f'line-height:1.6;color:{t["text"]}">'
+                f'<span style="font-size:11px;font-weight:700;letter-spacing:.07em;'
+                f'text-transform:uppercase;color:{color}">Ce que ça change</span><br>'
+                f'{esc(impact)}</div>') if impact else ""
+            action = it.get("action_fr", "")
+            action_html = (
+                f'<div style="margin-top:8px;font-size:13px;color:{t["highlight"]}">'
+                f'&rarr; {esc(action)}</div>') if action else ""
             parts.append(
                 f'<div style="padding:15px 0;border-bottom:1px solid {t["rule"]}">'
-                f'<a href="{esc(k["url"])}" style="color:{t["text"]};font-size:16px;'
+                f'<a href="{esc(main_link)}" style="color:{t["text"]};font-size:16px;'
                 f'font-weight:600;text-decoration:none;line-height:1.35">'
                 f'{esc(it["titre_fr"])}</a>'
                 f'<div style="margin-top:7px;font-size:14px;line-height:1.6;'
-                f'color:{t["muted"]}">{esc(it.get("resume_fr", ""))}</div></div>')
+                f'color:{t["muted"]}">{esc(it.get("resume_fr", ""))}</div>'
+                f'{impact_html}{action_html}'
+                f'<div style="margin-top:9px;font-size:12px;color:{t["muted"]}">'
+                f'<a href="{esc(main_link)}" style="color:{t["accent_soft"]};'
+                f'text-decoration:none">Fiche Notion</a> &middot; '
+                f'<a href="{esc(k["url"])}" style="color:{t["muted"]};'
+                f'text-decoration:none">source : {esc(source_label(k["url"]))}</a>'
+                f'</div></div>')
 
     week = NOW.isocalendar().week
     body = (
@@ -277,8 +338,11 @@ def send_mail(kept, resume_global):
         f'font-size:14px;line-height:1.65">{esc(resume_global)}</div>'
         + "".join(parts) +
         f'<div style="margin-top:30px;padding-top:16px;border-top:1px solid {t["rule"]};'
-        f'font-size:12px;color:{t["muted"]}">{len(kept)} items archives dans Notion, '
-        f'base Veille Tech.</div></div></body></html>')
+        f'font-size:12px;color:{t["muted"]}">{len(kept)} items archivés dans Notion, '
+        f'base Veille Tech.'
+        + (f' <a href="{esc(digest_url)}" style="color:{t["accent_soft"]};'
+           f'text-decoration:none">Ouvrir le digest de la semaine</a>' if digest_url else "")
+        + '</div></div></body></html>')
 
     msg = MIMEText(body, "html", "utf-8")
     msg["Subject"] = f"Veille tech &middot; semaine {week} &middot; {len(kept)} items".replace("&middot;", "|")
@@ -316,15 +380,16 @@ def main():
         if not isinstance(idx, int) or idx >= len(candidates):
             continue
         url = candidates[idx]["url"]
-        if push_item(item, url):
+        notion_url = push_item(item, url)
+        if notion_url:
             counts[item["target"]] += 1
-            kept.append({"item": item, "url": url})
+            kept.append({"item": item, "url": url, "notion_url": notion_url})
 
     resume_global = result.get("resume_global_fr", "")
     print(f"Retenus : {counts}")
     if kept:
-        push_digest(counts, resume_global)
-        send_mail(kept, resume_global)
+        digest_url = push_digest(counts, resume_global)
+        send_mail(kept, resume_global, digest_url)
         print("Digest Notion + mail envoyés.")
     else:
         print("Aucun item retenu cette semaine, pas de mail.")
